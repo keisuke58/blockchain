@@ -27,7 +27,15 @@ def get_client() -> "Client | None":
     api_secret = os.getenv("BINANCE_API_SECRET")
     if not api_key or not api_secret:
         return None
-    return Client(api_key, api_secret)
+    client = Client(api_key, api_secret)
+    # Sync timestamp offset with Binance server
+    try:
+        server_time = client.get_server_time()
+        import time
+        client.timestamp_offset = server_time["serverTime"] - int(time.time() * 1000)
+    except Exception:
+        pass
+    return client
 
 
 def get_btc_price(symbol: str = "BTCUSDT") -> float | None:
@@ -102,6 +110,29 @@ def get_klines(symbol: str = "BTCUSDT", interval: str = "1h", limit: int = 24) -
         return result
     except Exception as e:
         print(f"Klines fetch error: {e}")
+        return []
+
+
+def get_earn_subscription_history(asset: str = None, size: int = 100) -> list:
+    """
+    Fetch Simple Earn (Flexible) subscription history.
+    Returns list of purchases with asset, amount, purchase date.
+    """
+    client = get_client()
+    if not client:
+        return []
+    try:
+        params = {"size": size, "current": 1}
+        if asset:
+            params["asset"] = asset
+        records = client._request_margin_api(
+            "get", "simple-earn/flexible/history/subscriptionRecord",
+            True, data=params
+        )
+        rows = records.get("rows", []) if isinstance(records, dict) else []
+        return rows
+    except Exception as e:
+        print(f"Earn history fetch error: {e}")
         return []
 
 

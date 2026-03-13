@@ -250,6 +250,119 @@ def cmd_save():
         print(tabulate(rows[1:], headers=rows[0]))
 
 
+TAX_RECORDS_FILE = "tax_records.json"
+
+
+def load_tax_records() -> dict:
+    if os.path.exists(TAX_RECORDS_FILE):
+        with open(TAX_RECORDS_FILE, "r") as f:
+            import json
+            return json.load(f)
+    return {}
+
+
+def save_tax_records(records: dict):
+    import json
+    with open(TAX_RECORDS_FILE, "w") as f:
+        json.dump(records, f, indent=2)
+
+
+def cmd_tax():
+    header("Germany Tax Tracker (1-Year Rule)")
+    print("  Fetching Simple Earn subscription history from Binance...")
+
+    history = bapi.get_earn_subscription_history()
+    records = load_tax_records()
+    today = datetime.now().date()
+
+    # Build earliest purchase date per base asset from API
+    api_dates = {}
+    for row in history:
+        asset = row.get("asset", "")
+        ts = row.get("time") or row.get("purchaseTime") or row.get("createTime")
+        if ts and asset:
+            dt = datetime.fromtimestamp(int(ts) / 1000).date()
+            if asset not in api_dates or dt < api_dates[asset]:
+                api_dates[asset] = dt
+
+    # Merge API dates into records (don't overwrite manual entries)
+    for asset, dt in api_dates.items():
+        key = asset
+        if key not in records:
+            records[key] = str(dt)
+
+    # Get current portfolio to show only held assets
+    print("  Fetching current balances...")
+    portfolio = bapi.get_portfolio_value()
+    if portfolio is None:
+        print(f"{Fore.RED}  Set BINANCE_API_KEY and BINANCE_API_SECRET in .env")
+        return
+
+    prices_map = bapi.get_all_prices()
+    jpy_rate = bapi.get_jpy_rate()
+
+    rows = []
+    for item in portfolio["items"]:
+        if item["usd_value"] < 1.0:
+            continue
+        base = item["base"]
+        purchased_str = records.get(base) or records.get(item["asset"])
+
+        if purchased_str:
+            purchased = datetime.strptime(purchased_str, "%Y-%m-%d").date()
+            days_held = (today - purchased).days
+            days_to_free = max(0, 365 - days_held)
+            free_date = purchased + __import__("datetime").timedelta(days=365)
+            status = f"{Fore.GREEN}TAX FREE" if days_held >= 365 else f"{Fore.RED}{days_to_free}d left"
+            free_date_str = str(free_date)
+        else:
+            days_held = "?"
+            status = f"{Fore.YELLOW}No date"
+            free_date_str = "?"
+
+        rows.append([
+            item["asset"],
+            f"${item['usd_value']:,.2f}",
+            purchased_str or "-- enter below --",
+            str(days_held),
+            free_date_str,
+            status,
+        ])
+
+    print()
+    print(tabulate(
+        [[r[0], r[1], r[2], r[3], r[4], r[5]] for r in rows],
+        headers=["Asset", "Value(USD)", "Buy Date", "Days Held", "Tax-Free Date", "Status"]
+    ))
+    print(Style.RESET_ALL)
+
+    # Save merged records
+    save_tax_records(records)
+
+    # Prompt to add missing dates
+    missing = [r[0] for r in rows if r[2] == "-- enter below --"]
+    if missing:
+        print(f"\n  {len(missing)} assets have no purchase date. Enter them now? [y/N] ", end="")
+        if input().lower() == "y":
+            for asset_name in missing:
+                print(f"  {asset_name} - purchase date (YYYY-MM-DD, or skip): ", end="")
+                val = input().strip()
+                if val:
+                    base = asset_name[2:] if asset_name.startswith("LD") else asset_name
+                    records[base] = val
+            save_tax_records(records)
+            print(f"  Saved to {TAX_RECORDS_FILE}")
+
+    # Summary
+    print()
+    total_free = sum(item["usd_value"] for item in portfolio["items"]
+                     if item["usd_value"] >= 1.0 and
+                     records.get(item["base"]) and
+                     (today - datetime.strptime(records[item["base"]], "%Y-%m-%d").date()).days >= 365)
+    print(f"  Already tax-free (Germany) : {Fore.GREEN}${total_free:,.2f}{Style.RESET_ALL}")
+    print(f"  Tip: Sell BEFORE returning to Japan to avoid up to 55% Japanese tax.")
+
+
 def cmd_alert(args):
     if not args:
         print(f"{Fore.RED}  Usage: python cli.py alert <target_price_usd>")
@@ -298,6 +411,7 @@ COMMANDS = {
     "chart":     (cmd_chart,     False),
     "save":      (cmd_save,      False),
     "alert":     (cmd_alert,     True),
+    "tax":       (cmd_tax,       False),
 }
 
 

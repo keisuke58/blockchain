@@ -27,3 +27,11 @@ wallet_backup.json
 # OS
 .DS_Store
 Thumbs.db
+
+# VSCode history
+.history/
+
+# Personal data (do not commit)
+tax_records.json
+portfolio_history.csv
+d

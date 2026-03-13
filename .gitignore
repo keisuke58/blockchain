@@ -35,3 +35,7 @@ Thumbs.db
 tax_records.json
 portfolio_history.csv
 d
+
+# Logs and bot state
+logs/
+live_state.json

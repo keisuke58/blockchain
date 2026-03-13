@@ -103,3 +103,84 @@ def get_klines(symbol: str = "BTCUSDT", interval: str = "1h", limit: int = 24) -
     except Exception as e:
         print(f"Klines fetch error: {e}")
         return []
+
+
+def get_all_prices() -> dict:
+    """Returns {symbol: price} for all USDT pairs."""
+    if not BINANCE_AVAILABLE:
+        return {}
+    client = Client()
+    try:
+        tickers = client.get_all_tickers()
+        return {t["symbol"]: float(t["price"]) for t in tickers}
+    except Exception as e:
+        print(f"Price fetch error: {e}")
+        return {}
+
+
+def get_jpy_rate() -> float:
+    """Returns USD/JPY exchange rate via Binance USDTJPY or fallback."""
+    if not BINANCE_AVAILABLE:
+        return 150.0
+    client = Client()
+    try:
+        ticker = client.get_symbol_ticker(symbol="USDTJPY")
+        return float(ticker["price"])
+    except Exception:
+        # Fallback: use BTCJPY / BTCUSDT
+        try:
+            btc_jpy = float(client.get_symbol_ticker(symbol="BTCJPY")["price"])
+            btc_usd = float(client.get_symbol_ticker(symbol="BTCUSDT")["price"])
+            return btc_jpy / btc_usd
+        except Exception:
+            return 150.0
+
+
+def get_portfolio_value() -> dict | None:
+    """
+    Calculate total portfolio value in USD and JPY.
+    Handles both regular balances and LD (Simple Earn) assets.
+    """
+    balances = get_account_balance()
+    if balances is None:
+        return None
+
+    prices = get_all_prices()
+    jpy_rate = get_jpy_rate()
+
+    items = []
+    total_usd = 0.0
+
+    for b in balances:
+        asset = b["asset"]
+        amount = float(b["free"]) + float(b["locked"])
+
+        # Strip LD prefix for Simple Earn assets
+        base = asset[2:] if asset.startswith("LD") else asset
+
+        usd_value = 0.0
+        if base == "USDT" or base == "USD":
+            usd_value = amount
+        elif f"{base}USDT" in prices:
+            usd_value = amount * prices[f"{base}USDT"]
+        elif base == "EUR":
+            eur_usd = prices.get("EURUSDT", 1.08)
+            usd_value = amount * eur_usd
+
+        total_usd += usd_value
+        items.append({
+            "asset": asset,
+            "base": base,
+            "amount": amount,
+            "usd_value": usd_value,
+        })
+
+    # Sort by USD value descending
+    items.sort(key=lambda x: x["usd_value"], reverse=True)
+
+    return {
+        "items": items,
+        "total_usd": total_usd,
+        "total_jpy": total_usd * jpy_rate,
+        "jpy_rate": jpy_rate,
+    }
